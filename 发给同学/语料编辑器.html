@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>语料编辑器</title>
+<style>
+  :root{
+    --bg:#1b1d22; --panel:#25282f; --panel2:#2d313a; --line:#3a3f4a;
+    --fg:#e6e8ec; --dim:#9aa1ad; --accent:#6ea8fe;
+    --sys:#c9a227; --user:#4ea1d3; --asst:#5fb87a; --danger:#d9534f;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font:14px/1.6 -apple-system,"Segoe UI","Noto Sans CJK SC","Microsoft YaHei",sans-serif;
+  }
+  header{
+    position:sticky; top:0; z-index:10;
+    background:var(--panel); border-bottom:1px solid var(--line);
+    padding:10px 16px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+  }
+  h1{font-size:15px; margin:0 12px 0 0; font-weight:600}
+  button,label.btn{
+    background:var(--panel2); color:var(--fg); border:1px solid var(--line);
+    border-radius:6px; padding:5px 11px; font-size:13px; cursor:pointer;
+    font-family:inherit;
+  }
+  button:hover,label.btn:hover{border-color:var(--accent)}
+  button.primary{background:#2b4a7d; border-color:#3a6bb0}
+  button.danger{color:var(--danger)}
+  button.tiny{padding:1px 7px; font-size:12px; line-height:1.4}
+  #fname{
+    background:var(--bg); color:var(--fg); border:1px solid var(--line);
+    border-radius:6px; padding:5px 9px; font-size:13px; width:13em;
+    font-family:ui-monospace,Menlo,Consolas,monospace;
+  }
+  #fname:focus{outline:none; border-color:var(--accent)}
+  #stats{color:var(--dim); font-size:12px; margin-left:auto}
+  main{padding:16px; max-width:1000px; margin:0 auto}
+
+  .card{
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:10px; padding:12px 14px; margin-bottom:14px;
+  }
+  .card-head{
+    display:flex; align-items:center; gap:8px;
+    margin:-2px 0 10px; font-size:12px; color:var(--dim);
+  }
+  .card-head .idx{font-weight:600; color:var(--fg)}
+  .card-head .sp{margin-left:auto}
+
+  .row{display:flex; gap:10px; margin-bottom:6px; align-items:flex-start}
+  .role{
+    flex:0 0 78px; font-size:12px; padding-top:7px; font-weight:600;
+    font-family:ui-monospace,Menlo,Consolas,monospace;
+  }
+  .role.system{color:var(--sys)} .role.user{color:var(--user)} .role.assistant{color:var(--asst)}
+  textarea{
+    flex:1; resize:none; overflow:hidden;
+    background:var(--bg); color:var(--fg);
+    border:1px solid var(--line); border-radius:6px;
+    padding:7px 9px; font:inherit; line-height:1.6; min-height:40px;
+  }
+  textarea:focus{outline:none; border-color:var(--accent)}
+  .row .del{flex:0 0 auto; opacity:.45}
+  .row:hover .del{opacity:1}
+
+  .card-foot{display:flex; gap:8px; margin-top:10px; padding-left:88px}
+  .empty{color:var(--dim); text-align:center; padding:48px 0}
+
+  #note{
+    background:#3a2f14; border:1px solid #6b5518; color:#e8d18a;
+    padding:8px 12px; border-radius:8px; margin-bottom:14px;
+    display:flex; gap:12px; align-items:center; font-size:13px;
+  }
+  #note button{margin-left:auto}
+
+  /* ── 自己的弹窗（不用浏览器那个亮色的 alert/confirm）──── */
+  #modal{
+    position:fixed; inset:0; background:rgba(0,0,0,.6);
+    display:none; align-items:center; justify-content:center; z-index:100;
+  }
+  #modal.show{display:flex}
+  #modal .box{
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; padding:18px 20px; max-width:440px; min-width:300px;
+    box-shadow:0 12px 40px rgba(0,0,0,.5);
+  }
+  #modal .msg{white-space:pre-wrap; margin-bottom:16px; line-height:1.7}
+  #modal .btns{display:flex; gap:8px; justify-content:flex-end}
+  #modal button.ok{background:#2b4a7d; border-color:#3a6bb0}
+
+  .role{cursor:pointer}           /* role 标签可点击切换 */
+  .role:hover{text-decoration:underline dotted}
+
+  /* ── 加轮次的三个按钮：颜色和上面的角色标签一一对应 ──────
+     这样你不用读字，看颜色就知道哪个按钮加哪种角色。 */
+  button.add-u,button.add-s,button.add-a{font-weight:600}
+  button.add-u{color:var(--user); border-color:#2c5a77; background:#1d2b35}
+  button.add-s{color:var(--sys);  border-color:#6b5518; background:#2e2713}
+  button.add-a{color:var(--asst); border-color:#2f6640; background:#1b2c22}
+  button.add-u:hover{border-color:var(--user)}
+  button.add-s:hover{border-color:var(--sys)}
+  button.add-a:hover{border-color:var(--asst)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>语料编辑器</h1>
+  <button class="primary" id="btnSave">保存 JSONL</button>
+  <input id="fname" type="text" spellcheck="false" autocapitalize="off" autocomplete="off"
+         title="保存成什么文件名。改个名字再点「保存」＝另存为一份">
+  <label class="btn">打开文件<input type="file" id="fileIn" accept=".jsonl,.json,.md,.txt" hidden></label>
+  <button id="btnBind" style="display:none"
+          title="绑定一个文件后，每次改动都会自动写回去 —— 不用再手动保存">绑定文件（自动保存）</button>
+  <button id="btnAdd">+ 新的一条</button>
+  <button id="btnAdd10" title="一次加 10 条空的（攒语料时省得点十下）">+ 10 条</button>
+  <span id="stats"></span>
+</header>
+
+<main>
+  <div id="note" style="display:none">
+    <span id="noteText"></span>
+    <button id="noteBtn"></button>
+  </div>
+  <div id="list"></div>
+</main>
+
+<div id="modal"><div class="box">
+  <div class="msg" id="modalMsg"></div>
+  <div class="btns" id="modalBtns"></div>
+</div></div>
+
+<script>
+"use strict";
+
+/* ══════════════════════════════════════════════════════════
+   数据模型
+   samples = [
+     { messages: [ {role, content}, ... ] },
+     ...
+   ]
+   role 只有三种: system / user / assistant
+   ══════════════════════════════════════════════════════════ */
+
+const LS_KEY = "corpus_editor_v1";
+let samples = [];
+let lastFileName = "语料.jsonl";
+
+/* ── 防呆用的状态 ────────────────────────────────────────
+   fileHandle  : 绑定的文件（能直接写硬盘）。null = 没绑定
+   dirty       : 距上次【落盘】之后有没有改动
+   savedAt     : 上次落盘的时间
+   ──────────────────────────────────────────────────────── */
+let fileHandle = null;
+let dirty = false;
+let savedAt = 0;
+let diskTimer = null;
+const CAN_BIND = typeof window.showSaveFilePicker === "function";
+
+const $ = id => document.getElementById(id);
+const list = $("list");
+
+/* ── 一条样本的读写 ─────────────────────────────────────── */
+
+function blankSample() {
+  // 新的一条默认就是【一问一答】，不带 system。
+  //
+  // 每一条答案本身就是风格演示，不靠"设定"去触发。
+  // 带上 system 容易把风格变成"检索钥匙" —— 不给设定就不出风格，
+  // 那样训出来的模型在日常聊天里会失灵。所以默认不带。
+  //
+  // 真需要"夹在中间的设定"时，点卡片上的 +system 自己加。
+  return { messages: [
+    { role: "user",      content: "" },
+    { role: "assistant", content: "" },
+  ]};
+}
+
+/* 把样本整理成能存的样子:去掉空轮次,去掉空样本,返回 null 表示这条是空的 */
+function clean(sample) {
+  const msgs = sample.messages
+    .filter(m => m.content.trim() !== "")
+    .map(m => ({ role: m.role, content: m.content }));
+  return msgs.length ? { messages: msgs } : null;
+}
+
+/* 把输入框里的名字整理成能用的文件名。
+   去掉路径分隔符和非法字符、补上 .jsonl（改名字就是"另存为一份"）。
+   ★ 纯函数：不碰 DOM，能单独测 */
+function sanitizeName(raw, fallback) {
+  fallback = fallback || "语料.jsonl";
+  let n = String(raw == null ? "" : raw)
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, "_")     // 路径分隔符 + Windows 非法字符
+    .replace(/^\.+/, "");              // 别一不小心存成隐藏文件
+  if (!n) return fallback;
+  if (!/\.jsonl$/i.test(n)) {
+    n = n.replace(/\.(json|md|txt)$/i, "") + ".jsonl";
+  }
+  return n;
+}
+
+/* ── 渲染 ───────────────────────────────────────────────── */
+
+/* 让 textarea 随内容长高 */
+function grow(el) {
+  el.style.height = "auto";
+  el.style.height = Math.max(el.scrollHeight, 40) + "px";
+}
+
+function render() {
+  list.innerHTML = "";
+
+  if (samples.length === 0) {
+    list.innerHTML = '<div class="empty">还没有内容。点右上角「+ 新的一条」开始，或者「打开文件」导入已有的 JSONL。</div>';
+    updateStats();
+    return;
+  }
+
+  samples.forEach((sample, si) => {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    /* 卡片头 */
+    const head = document.createElement("div");
+    head.className = "card-head";
+    head.innerHTML = `<span class="idx">第 ${si + 1} 条</span>`;
+    const sp = document.createElement("span");
+    sp.className = "sp";
+    head.appendChild(sp);
+
+    const mk = (label, fn, danger) => {
+      const b = document.createElement("button");
+      b.className = "tiny" + (danger ? " danger" : "");
+      b.textContent = label;
+      b.onclick = fn;
+      return b;
+    };
+    head.appendChild(mk("↑", () => move(si, -1)));
+    head.appendChild(mk("↓", () => move(si, +1)));
+    head.appendChild(mk("复制", () => {
+      samples.splice(si + 1, 0, JSON.parse(JSON.stringify(sample)));
+      render(); save();
+    }));
+    head.appendChild(mk("删除", async () => {
+      if (await confirmBox(`删掉第 ${si + 1} 条？\n\n这个操作没法撤销。`)) {
+        samples.splice(si, 1); render(); save();
+      }
+    }, true));
+    card.appendChild(head);
+
+    /* 每一轮 */
+    sample.messages.forEach((msg, mi) => {
+      const row = document.createElement("div");
+      row.className = "row";
+
+      const role = document.createElement("div");
+      role.className = "role " + msg.role;
+      role.textContent = msg.role;
+      role.title = "点一下可以切换角色：user → system → assistant → user";
+      role.onclick = () => {                 // 任何一轮都能改成 system
+        const order = ["user", "system", "assistant"];
+        msg.role = order[(order.indexOf(msg.role) + 1) % order.length];
+        render(); save();
+      };
+      row.appendChild(role);
+
+      const ta = document.createElement("textarea");
+      ta.value = msg.content;
+      ta.placeholder = msg.role === "system" ? "可选。写在这里的内容模型不会去学，只当作背景设定。"
+                    : msg.role === "user"   ? "用户说的话"
+                    : "模型该学的回答 —— 只有这一栏会被训练";
+      ta.oninput = () => {                 // 只改数据，不重渲染（否则光标会跳）
+        msg.content = ta.value;
+        grow(ta);
+        updateStats();
+        save();
+      };
+      row.appendChild(ta);
+      setTimeout(() => grow(ta), 0);
+
+      const del = document.createElement("button");
+      del.className = "tiny danger del";
+      del.textContent = "×";
+      del.title = "删掉这一轮";
+      del.onclick = () => { sample.messages.splice(mi, 1); render(); save(); };
+      row.appendChild(del);
+
+      card.appendChild(row);
+    });
+
+    /* 卡片脚：加轮次
+       ★ 三个按钮【全部常驻】—— 一条对话里可以有多个 system。
+         按 user → system → assistant 的顺序点，出来的顺序天然就是对的。 */
+    const foot = document.createElement("div");
+    foot.className = "card-foot";
+
+    const add = (r) => {
+      const f = document.createElement("button");
+      // 颜色跟着角色走：user 蓝 / system 金 / assistant 绿
+      f.className = "tiny " + { user: "add-u", system: "add-s", assistant: "add-a" }[r];
+      f.textContent = "+ " + r;
+      f.title = `在末尾加一轮 ${r}`;
+      f.onclick = () => {
+        sample.messages.push({ role: r, content: "" });
+        render(); save();
+      };
+      return f;
+    };
+    foot.appendChild(add("user"));
+    foot.appendChild(add("system"));
+    foot.appendChild(add("assistant"));
+    card.appendChild(foot);
+
+    list.appendChild(card);
+  });
+
+  updateStats();
+}
+
+function move(i, d) {
+  const j = i + d;
+  if (j < 0 || j >= samples.length) return;
+  [samples[i], samples[j]] = [samples[j], samples[i]];
+  render(); save();
+}
+
+function updateStats() {
+  const good = samples.map(clean).filter(Boolean);
+  const chars = good.reduce((n, s) =>
+    n + s.messages.reduce((m, x) => m + x.content.length, 0), 0);
+
+  let flag;
+  if (fileHandle) {
+    flag = dirty ? `⏳ 正在写回 ${fileHandle.name}`
+                 : `✅ 已自动保存到 ${fileHandle.name}`;
+  } else if (dirty) {
+    flag = "⚠️ 有改动还没落地 —— 点「保存 JSONL」，或用「绑定文件」开自动保存";
+  } else {
+    flag = "✅ 已保存";
+  }
+  $("stats").textContent = `${good.length} 条 · ${chars} 字　${flag}`;
+}
+
+/* ── 生成要写出去的内容 ─────────────────────────────────── */
+
+function buildText() {
+  const good = samples.map(clean).filter(Boolean);   // 丢掉空轮次、空样本
+  return {
+    text: good.map(s => JSON.stringify(s)).join("\n") + "\n",
+    count: good.length,
+    skipped: samples.length - good.length,
+  };
+}
+
+/* ── 自动保存（两层）─────────────────────────────────────
+   第 1 层：存进浏览器（localStorage）—— 关掉页面也不丢
+   第 2 层：写回硬盘（如果你绑定了文件）—— 才是真的落地
+   ──────────────────────────────────────────────────────── */
+
+function save() {
+  dirty = true;
+  persistLS();
+  // 第 2 层（延迟 1.5 秒，免得你打字时疯狂写盘）
+  if (fileHandle) {
+    clearTimeout(diskTimer);
+    diskTimer = setTimeout(writeToFile, 1500);
+  }
+  updateStats();
+}
+
+/* 只把内容存进浏览器（不标 dirty、不碰硬盘）。
+   改文件名时用这个 —— 改个名字不算"内容有改动"。 */
+function persistLS() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify({ samples, lastFileName })); }
+  catch (e) { /* 存不下就算了，不影响正常使用 */ }
+}
+
+/* 改文件名（会把输入框也同步过去） */
+function setFileName(name) {
+  lastFileName = sanitizeName(name);
+  const el = $("fname");
+  if (el) el.value = lastFileName;
+  return lastFileName;
+}
+
+async function writeToFile() {
+  if (!fileHandle) return;
+  const { text } = buildText();
+  try {
+    const w = await fileHandle.createWritable();
+    await w.write(text);
+    await w.close();
+    dirty = false;
+    savedAt = Date.now();
+  } catch (e) {
+    showNote("写文件失败：" + e.message + " —— 你可能移动或删掉了那个文件。重新绑定一次就好。",
+             "知道了", hideNote);
+    fileHandle = null;
+  }
+  updateStats();
+}
+
+async function bindFile() {
+  try {
+    setFileName($("fname").value);      // 以输入框里的名字为准
+    fileHandle = await window.showSaveFilePicker({
+      suggestedName: lastFileName,
+      types: [{ description: "JSONL 语料", accept: { "application/json": [".jsonl"] } }],
+    });
+    lastFileName = fileHandle.name;
+    await writeToFile();
+    showNote(`已绑定「${lastFileName}」。现在每次改动都会自动写回这个文件，不用再手动保存。`,
+             "知道了", hideNote);
+  } catch (e) { /* 用户点了取消，什么都不用做 */ }
+  updateStats();
+}
+
+if (CAN_BIND) {
+  $("btnBind").style.display = "";
+  $("btnBind").onclick = bindFile;
+}
+
+function loadFromLS() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return false;
+    const d = JSON.parse(raw);
+    if (!d.samples || !d.samples.length) return false;
+    samples = d.samples;
+    if (d.lastFileName) lastFileName = d.lastFileName;
+    return true;
+  } catch (e) { return false; }
+}
+
+/* ── 保存成 JSONL ───────────────────────────────────────── */
+
+$("btnSave").onclick = () => {
+  const { text, count, skipped } = buildText();
+  if (count === 0) { alertBox("没有内容可以保存。"); return; }
+
+  // 以输入框里的名字为准 —— 改了名字再点保存就是"另存为一份"
+  setFileName($("fname").value);
+
+  const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = lastFileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+
+  dirty = false; savedAt = Date.now(); persistLS(); updateStats();
+  showNote(`已保存 ${count} 条到 ${lastFileName}`
+    + (skipped ? `（跳过了 ${skipped} 条空的）` : "")
+    + (fileHandle ? "" : " —— 检查一下浏览器的下载文件夹。"), "知道了", hideNote);
+};
+
+/* ── 文件名输入框 ───────────────────────────────────────
+   想换名字直接改这里。不用先改再点保存 —— 点保存时会读它。
+   离开输入框时自动补上 .jsonl，省得存出一个没后缀的文件。
+   ──────────────────────────────────────────────────────── */
+
+$("fname").oninput = () => {
+  lastFileName = sanitizeName($("fname").value);
+  persistLS();          // 只是改名字，不算"内容有改动"
+};
+$("fname").onblur = () => { setFileName($("fname").value); persistLS(); };
+$("fname").onkeydown = (ev) => {
+  if (ev.key === "Enter") { setFileName($("fname").value); persistLS(); $("fname").blur(); }
+};
+
+/* ── 打开文件 ───────────────────────────────────────────── */
+
+$("fileIn").onchange = (ev) => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const text = reader.result;
+    setFileName(file.name.replace(/\.(md|txt)$/i, ".jsonl"));
+
+    // 先试 JSONL；失败就试 md
+    let parsed = parseJSONL(text);
+    let how = "JSONL";
+    if (!parsed.length) { parsed = parseMD(text); how = "纯文本 md"; }
+
+    if (!parsed.length) {
+      alertBox("这个文件读不出内容。\n\n支持两种：\n" +
+               "  · JSONL —— 每行一个 {\"messages\":[...]}\n" +
+               "  · 纯文本 —— 问题一行、回答一行、空行分隔");
+      return;
+    }
+    samples = parsed;
+    render(); save();
+    showNote(`从「${file.name}」读进来 ${parsed.length} 条（按${how}解析）。`, "知道了", hideNote);
+  };
+  reader.readAsText(file, "utf-8");
+  ev.target.value = "";   // 同一个文件能再打开一次
+};
+
+/* JSONL：一行一个对象。也兼容裸数组、ShareGPT。
+   ★ 纯函数：只返回数组，不改外面的东西 —— 这样能单独测 */
+function parseJSONL(text) {
+  const out = [];
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    let obj;
+    try { obj = JSON.parse(t); } catch (e) { continue; }   // 坏的跳过，不影响其他行
+    let msgs = null;
+    if (Array.isArray(obj)) msgs = obj;                          // 裸数组
+    else if (obj && Array.isArray(obj.messages)) msgs = obj.messages;
+    else if (obj && Array.isArray(obj.conversations)) {          // ShareGPT
+      msgs = obj.conversations.map(c => ({
+        role: c.from === "human" || c.from === "user" ? "user" : "assistant",
+        content: c.value ?? c.content ?? "",
+      }));
+    }
+    if (!msgs) continue;
+    const fixed = msgs
+      .filter(m => m && typeof m.content === "string")
+      .map(m => ({ role: ["system","user","assistant"].includes(m.role) ? m.role : "user",
+                   content: m.content }));
+    if (fixed.some(m => m.content.trim())) out.push({ messages: fixed });
+  }
+  return out;
+}
+
+/* 纯文本 md：问题一行、回答一行或多行、空行分隔。也是纯函数。 */
+function parseMD(text) {
+  const out = [];
+  for (const block of text.replace(/\r\n/g, "\n").split("\n\n")) {
+    const lines = block.split("\n").filter(l => l.trim());
+    if (lines.length < 2) continue;
+    out.push({ messages: [
+      { role: "user",      content: lines[0].trim() },
+      { role: "assistant", content: lines.slice(1).join("\n").trim() },
+    ]});
+  }
+  return out;
+}
+
+/* ── 提示条 ─────────────────────────────────────────────── */
+
+function showNote(msg, btnLabel, fn) {
+  $("noteText").textContent = msg;
+  const b = $("noteBtn");
+  b.textContent = btnLabel;
+  b.onclick = fn;
+  $("note").style.display = "flex";
+}
+function hideNote() { $("note").style.display = "none"; }
+
+/* ── 自己的弹窗（替代浏览器那个亮色的 alert / confirm）───── */
+
+function modal(msg, buttons) {
+  return new Promise(resolve => {
+    $("modalMsg").textContent = msg;
+    const box = $("modalBtns");
+    box.innerHTML = "";
+    buttons.forEach(b => {
+      const el = document.createElement("button");
+      el.textContent = b.label;
+      if (b.primary) el.className = "ok";
+      el.onclick = () => {
+        $("modal").classList.remove("show");
+        resolve(b.value);
+      };
+      box.appendChild(el);
+    });
+    $("modal").classList.add("show");
+  });
+}
+
+const alertBox = (msg) => modal(msg, [{ label: "知道了", value: true, primary: true }]);
+const confirmBox = (msg) => modal(msg, [
+  { label: "取消", value: false },
+  { label: "确定", value: true, primary: true },
+]);
+
+/* ── 新的一条 ───────────────────────────────────────────── */
+
+$("btnAdd").onclick = () => {
+  samples.push(blankSample());
+  render(); save();
+  const tas = list.querySelectorAll(".card:last-child textarea");
+  if (tas[0]) tas[0].focus();
+};
+
+/* ── 一次加 10 条 ───────────────────────────────────────
+   攒语料时省得点十下。加完不跳到最后一条输入框（那样会滚很远），
+   只提示一句"加了 10 条空的"。 */
+$("btnAdd10").onclick = () => {
+  for (let i = 0; i < 10; i++) samples.push(blankSample());
+  render(); save();
+  const last = list.querySelectorAll(".card");
+  if (last.length) last[last.length - 1].scrollIntoView({ block: "end" });
+  showNote(`又加了 10 条空的（现在一共 ${samples.length} 条）。`
+           + " 空的在保存时会被自动丢掉，不用怕。", "知道了", hideNote);
+};
+
+/* ── 启动 ───────────────────────────────────────────────── */
+
+setFileName(lastFileName);      // 启动时先把文件名填进输入框
+if (loadFromLS()) {
+  setFileName(lastFileName);    // 恢复出来的名字覆盖默认值
+  render();
+  showNote(`恢复了上次没保存的内容（${samples.length} 条）。`, "清空重来", async () => {
+    if (await confirmBox("清空全部内容？\n\n这个操作没法撤销。")) {
+      samples = []; localStorage.removeItem(LS_KEY); render(); hideNote();
+    }
+  });
+} else {
+  samples = [blankSample()];
+  render();
+}
+
+/* ── Ctrl+S 保存 ────────────────────────────────────────────
+   浏览器默认的 Ctrl+S 是"保存整个网页"，没用。这里把它拦下来，
+   改成"保存 JSONL"。养成手一抖就按一下的习惯。
+   ─────────────────────────────────────────────────────────── */
+window.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    if (fileHandle) writeToFile();
+    else $("btnSave").click();
+  }
+});
+
+/* ── 关页面前拦一下 ─────────────────────────────────────────
+   有"还没写到文件里"的改动时，浏览器会弹一个"确定要离开吗"。
+   注意：这里不能调用 save()，否则会又把它标成 dirty 并排一个定时器。
+   ─────────────────────────────────────────────────────────── */
+window.addEventListener("beforeunload", (e) => {
+  try { localStorage.setItem(LS_KEY, JSON.stringify({ samples, lastFileName })); } catch (err) {}
+  if (dirty && !fileHandle) {
+    e.preventDefault();
+    e.returnValue = "";
+  }
+});
+</script>
+</body>
+</html>
